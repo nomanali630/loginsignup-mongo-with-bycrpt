@@ -98,10 +98,10 @@ app.post("/signup", function (req, res, next) {
 
 
     )
-})
+});
 
-app.post("/login",function(req,res,next){
-    if(!req.body.password || !req.body.email){
+app.post("/login", function (req, res, next) {
+    if (!req.body.password || !req.body.email) {
         res.status(403).send(`
         please provide email and password in json body
         {
@@ -110,12 +110,82 @@ app.post("/login",function(req,res,next){
         }`)
         return;
     }
-    userModel.findOne({email:req.body.email},
+    userModel.findOne({ email: req.body.email },
+        function (err, user) {
+            if (err) {
+                res.status(500).send({
+                    message: "an error occured" + JSON.stringify(err)
+                });
+            } else if (user) {
+                bcrypt.verifyHash(req.body.password, user.password).then(isMatched => {
+                    if (isMatched) {
+                        console.log("matched");
+                        var token = jwt.sign({
+                            id: user._id,
+                            name: user.name,
+                            email: user.email,
+                            phone: user.phone,
+                            gender: user.gender,
+                            ip: req.socket.remoteAddress
+                        }, SERVER_SECRET)
+                        res.send({
+                            message: "login success",
+                            user: {
+                                name: user.name,
+                                email: user.email,
+                                phone: user.phone,
+                                gender: user.gender,
+                            },
+                            token: token
+                        });
+                    } else {
+                        res.status(401).send({
+                            message: "incorrect password"
+                        })
+                    }
+                }).catch(e => {
+                    console.log("error: ", e)
+                });
+            } else {
+                res.status(403).send({
+                    message: "user not found"
+                });
+            };
+        });
+});
+
+app.get("/profile", function (req, res, next) {
+    if (!req.headers.token) {
+        res.status(403).send(
+            `please provide token in header
+            {
+                "token":"hhdjhukenihe 989898989"
+            }`
         )
+        return;
+    }
+    var decodedData = jwt.verify(req.headers.token, SERVER_SECRET);
+    console.log("user: ", decodedData)
+
+    userModel.findById(decodedData.id, 'name email phone gender createdOn',
+        function (err, doc) {
+
+            if (!err) {
+
+                res.send({
+                    profile: doc
+                })
+            } else {
+                res.status(500).send({
+                    message: "server error"
+                })
+            }
+
+        })
 })
 
 var PORT = process.env.PORT || 5000;
 
-app.listen(PORT,function(){
-    console.log("server is running on "+ PORT);
+app.listen(PORT, function () {
+    console.log("server is running on " + PORT);
 })
