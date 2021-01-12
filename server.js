@@ -5,7 +5,8 @@ var bodyParser = require("body-parser")
 var mongoose = require("mongoose")
 var bcrypt = require("bcrypt-inzi")
 var jwt = require("jsonwebtoken");
-
+var cookieParser = require("cookie-parser");
+var path = require("path");
 
 var SERVER_SECRET = process.env.SECRET || "1234";
 
@@ -45,6 +46,8 @@ var app = express();
 app.use(bodyParser.json());
 app.use(morgan('dev'));
 app.use(cors());
+app.use(cookieParser());
+app.use("/", express.static(path.resolve(path.join(__dirname, "public"))))
 
 app.post("/signup", function (req, res, next) {
     if (!req.body.name || !req.body.email
@@ -62,7 +65,7 @@ app.post("/signup", function (req, res, next) {
     userModel.findOne({ email: req.body.email },
         function (err, data) {
             if (!err && !data) {
-                bcrypt.StringToHash(req.body.password).then(function (pyaraPass) {
+                bcrypt.stringToHash(req.body.password).then(function (pyaraPass) {
                     var newUser = new userModel({
                         "name": req.body.name,
                         "email": req.body.email,
@@ -123,11 +126,14 @@ app.post("/login", function (req, res, next) {
                         var token = jwt.sign({
                             id: user._id,
                             name: user.name,
-                            email: user.email,
-                            phone: user.phone,
-                            gender: user.gender,
-                            ip: req.socket.remoteAddress
+                            email: user.email
                         }, SERVER_SECRET)
+
+                        res.send("jToken",jToken,{
+                            maxAge: 86_400_000,
+                            httpOnly: true
+                        });
+
                         res.send({
                             message: "login success",
                             user: {
@@ -135,10 +141,14 @@ app.post("/login", function (req, res, next) {
                                 email: user.email,
                                 phone: user.phone,
                                 gender: user.gender,
-                            },
-                            token: token
+                            }
+                        });
+                        res.cookie('jwt',token,{
+                            maxAge:86_400_000,
+                            httpOnly:true
                         });
                     } else {
+                        console.log("not matched");
                         res.status(401).send({
                             message: "incorrect password"
                         })
@@ -153,25 +163,48 @@ app.post("/login", function (req, res, next) {
             };
         });
 });
+app.use(function (req, res, next) {
 
-app.get("/profile", function (req, res, next) {
-    if (!req.headers.token) {
-        res.status(403).send(
-            `please provide token in header
-            {
-                "token":"hhdjhukenihe 989898989"
-            }`
-        )
+    console.log("req.cookies: ", req.cookies);
+    if (!req.cookies.jToken) {
+        res.status(401).send("include http-only credentials with every request")
         return;
     }
-    var decodedData = jwt.verify(req.headers.token, SERVER_SECRET);
-    console.log("user: ", decodedData)
+    jwt.verify(req.cookies.jToken, SERVER_SECRET, function (err, decodedData) {
+        if (!err) {
 
-    userModel.findById(decodedData.id, 'name email phone gender createdOn',
+            const issueDate = decodedData.iat * 1000;
+            const nowDate = new Date().getTime();
+            const diff = nowDate - issueDate; 
+
+            if (diff > 300000) { 
+                res.status(401).send("token expired")
+            } else { 
+                var token = jwt.sign({
+                    id: decodedData.id,
+                    name: decodedData.name,
+                    email: decodedData.email,
+                }, SERVER_SECRET)
+                res.cookie('jToken', token, {
+                    maxAge: 86_400_000,
+                    httpOnly: true
+                });
+                req.body.jToken = decodedData
+                next();
+            }
+        } else {
+            res.status(401).send("invalid token")
+        }
+    });
+})
+
+app.get("/profile", (req, res, next) => {
+
+    console.log(req.body)
+
+    userModel.findById(req.body.jToken.id, 'name email phone gender createdOn',
         function (err, doc) {
-
             if (!err) {
-
                 res.send({
                     profile: doc
                 })
@@ -180,9 +213,17 @@ app.get("/profile", function (req, res, next) {
                     message: "server error"
                 })
             }
-
         })
 })
+
+app.post("/logout", (req, res, next) => {
+    res.cookie('jToken', "", {
+        maxAge: 86_400_000,
+        httpOnly: true
+    });
+    res.send("logout success");
+})
+
 
 var PORT = process.env.PORT || 5000;
 
